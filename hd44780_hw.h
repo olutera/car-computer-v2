@@ -5,13 +5,15 @@
 ***************************************************************************/
 #ifndef HD47880_HW_H
 #define HD44780_HW_H
+#include "global.h"
 
 /* change these definitions to adapt setting */
-
-/*Change this to what you need this is an example of 16x2 lcd display */
+// use 2x40 and enable width change in configuration
 #define LCD_LINES           2     /* visible lines */
-#define LCD_CHARS           16    /* number of char in a row */
-
+#define LCD_CHARS           40    /* number of char in a row */
+//#define LCD_LINES           2     /* visible lines */
+//#define LCD_CHARS           16    /* number of char in a row */
+//
 /* Change IO setting */
 
 #define LCD_DATA_PIN    PINC

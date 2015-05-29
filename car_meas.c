@@ -10,31 +10,39 @@
 #include <string.h>
 #include <stdio.h>
 #include "hd44780.h"
-#include <util/delay.h>
+#include "global.h"
+#include <math.h>
+
+
+//#define USART_DEBUG - moved to global.h
+#ifdef USART_DEBUG
+#include "uart.h"
+#include <stdio.h>
+#include <avr/pgmspace.h>
+#endif
 
 volatile uint32_t Counter1Ticks=0;
-
-/* T0 overflow */
-volatile uint8_t Counter0Val = 0;
-volatile uint8_t Counter0_OVF = 0;
+volatile uint16_t Counter0Ticks=0;
 
 volatile uint8_t int0_flag=0;
 
-cm_t CarData;
-cm_t EEMEM eCarVals;
+// section positions are specified in the linker settings
+bcdata_t BCData;
+bcdata_t eBCVals __attribute__ ((section(".BCData"))); // 8 bytes so far, reserver 128bytes
+cardata_t CarData;
+cardata_t eCarVals __attribute__ ((section (".CarData"))); // 29 bytes so far, reserved 128bytes
+statsdata_t StatsData;
+statsdata_t eStatsVals __attribute__ ((section (".StatsData"))); // 68 bytes so far, reserved 128bytes
 
 volatile uint8_t Tim1_OVF=0;
 
 ISR(TIMER1_OVF_vect)
 {
-
     Tim1_OVF++;
-
 }
 
 void Init50kPD3(void)
 {
-
     DDRD |= 1 << PD3;
     PORTD &= ~(1<<PD3);
 
@@ -44,99 +52,122 @@ void Init50kPD3(void)
     TCNT2=0;
 
     OCR2A = 79; /* 100kHz */
-    OCR2A = 79; /* 100kHz */
 
     TCCR2A = 1<< COM2B0 | 1<<WGM21;
 
     TCCR2B = 1 << CS20;
 
     /* obcas ma timer tendenci nabehnout na spatne frekvenci - zejmena pokud doslo k suspendu a naslednemu odpojeni/pripojeni napajeni - snad vyreseno */
-
 }
 
-void InitCMeas(void)
+void InitDataAndApp(void)
 {
+
+    if(eeprom_read_byte(&eBCVals.init)!=EE_INIT_B)
+    {
+        BCData.init = EE_INIT_B;
+
+        BCData.VoltmeterCalibration = 999;
+        BCData.DefaultSubDispPref = 0;
+        BCData.SleepTime = 30;
+        BCData.Sensors = 0;
+        BCData.SubDisplayChangeSpeed = 16;
+
+        #ifdef XANTIA
+        BCData.VoltmeterCalibration = 1007;
+        BCData.DefaultSubDispPref = 0;
+        BCData.SleepTime = 30;
+        BCData.Sensors = 1;
+        BCData.SubDisplayChangeSpeed = 8;
+        #endif
+
+        StoreBCData();
+    }
 
     if(eeprom_read_byte(&eCarVals.init)!=EE_INIT_B)
     {
+        // init with default/empty values
+        CarData.init = EE_INIT_B;
 
-        waitms(200);
+        CarData.NumC = 4;
+        CarData.CalibInjFlow = 100;
+        CarData.CalibMeters = 400;
+        CarData.CalibSpeedRatio = 100;
 
-        if(eeprom_read_byte(&eCarVals.init)!=EE_INIT_B)
+        CarData.TankL   = 0;
+
+        for(uint8_t i=0; i<CALCT_CNT; i++)
         {
-
-            uint8_t i;
-
-            CarData.init = EE_INIT_B;
-
-            CarData.AvgInj=0;
-
-            CarData.TripInj=0;
-
-            CarData.TotInj=0;
-
-
-            CarData.AvgImp = 0;
-            CarData.TripImp =0;
-            CarData.TotImp = 0;
-
-            CarData.CalibMeters = AROSA_IMP;
-            CarData.CalibInjFlow = AROSA_INJ;
-
-            CarData.NumV = AROSA_V;
-
-            CarData.TankL = 0;
-            CarData.CalibL2 = 0;
-            CarData.CalibL1 = 0;
-
-            CarData.CalibV1 =0;
-            CarData.CalibV2=0;
-
-            for(i=0; i<CALCT_CNT; i++)
-            {
-
-                CarData.TankCalib[i].init = 0;
-                CarData.TankCalib[i].mvolt = 0;
-                CarData.TankCalib[i].litr = 0;
-            }
-
-            CarData.TankMode = TANK_MODE_STD;
-
-            CarData.calib_volt = 999;
-
-            StoreCMeas();
+            CarData.TankCalib[i].init = 0;
+            CarData.TankCalib[i].mvolt = 0;
+            CarData.TankCalib[i].litr = 0;
         }
 
+        CarData.TankMode = TANK_MODE_STD;
+
+        #ifdef XANTIA
+        CarData.NumC = 4;
+        CarData.CalibInjFlow = 1820;
+        CarData.CalibMeters = 500;
+        CarData.CalibSpeedRatio = 91;
+        CarData.TankL = 65;
+        CarData.TankCalib[0].init = EE_INIT_B;
+        CarData.TankCalib[0].mvolt = 3200;
+        CarData.TankCalib[0].litr = 0;
+        CarData.TankCalib[CALCT_CNT-1].init = EE_INIT_B;
+        CarData.TankCalib[CALCT_CNT-1].mvolt = 620;
+        CarData.TankCalib[CALCT_CNT-1].litr = 65;
+        #endif
+
+        StoreCarData();
     }
 
-    eeprom_read_block(&CarData,&eCarVals,sizeof(cm_t));
+    if(eeprom_read_byte(&eStatsVals.init)!=EE_INIT_B)
+    {
+        StatsData.init = EE_INIT_B;
+
+        StatsData.CurrInj = 0;
+        StatsData.TripInj = 0;
+        StatsData.TankInj = 0;
+        StatsData.TotInj  = 0;
+
+        StatsData.CurrImp = 0;
+        StatsData.TripImp = 0;
+        StatsData.TankImp = 0;
+        StatsData.TotImp  = 0;
+
+    StoreStatsData();
+    }
+
+    eeprom_read_block(&BCData,&eBCVals,sizeof(bcdata_t));
+    eeprom_read_block(&CarData,&eCarVals,sizeof(cardata_t));
+    eeprom_read_block(&StatsData,&eStatsVals,sizeof(statsdata_t));
 
     Init50kPD3();
 
     TCNT1=0;
+    TIMSK1 |= 1 << TOIE1;        /* TIMER1_OVF_vect */
+
     TCCR1B = 1<< CS11 | 1 << CS12;      /* counter 1 16bit PD5*/
 
     DDRD &= ~(1<<PD4);      /* input T0 */
     PORTD |= 1 << PD4;      /* pullup T0 */
 
-    TIMSK1 = 1<<TOIE1; /* fixed missing INT initialization 29.7.2014 */
-
     TCNT0=0;
-    TCCR0B=1<<CS02|1<<CS01|1<<CS00;    /* rissing edge T0*/
+    TIMSK0 |= 1 << TOIE0;        /* TIMER0_OVF_vect */
 
-    TIMSK0 = 1 << TOIE0;        /* TIMER0_OVF_vect */
+    TCCR0B=1<<CS02|1<<CS01|1<<CS00;    /* rissing edge T0*/
 
     if(CarData.TankMode == TANK_MODE_COMP) initComparator();
     else disComparator();
 
     /* osetrime narychlo chybnou hodnotu po prehravani firmware a zmene eeprom */
     if(getSleepTime() > 60 || getSleepTime() ==0) setSleepTime(30);
+    if(GetDefSubDisp() > 6) SetDefSubDisp(4);
 
-    if(getMenu1() > 5) setMenu1(4);
+    RefreshWideFlag(); // reads flash data into volatile var
 
-
-    sei();
-
+    sei(); // enable global interrupts
 }
 
 volatile uint16_t TankV[TANKV_MAX];
@@ -193,7 +224,6 @@ void initComparator(void)
     ACSR = 1 << ACIS1 ; // enable interrupt , falling edge
     DIDR1 |= 1<< AIN0D;
     ACSR |= 1 << ACIE;
-
 }
 
 void disComparator(void)
@@ -225,11 +255,11 @@ inline void ADCMeasPoll(void)
 
         V12MeasTime = RetWdTimer();
 
-        StartAD(V12_CH)   ;
+        StartAD(V12_CH);
         ReadAD(V12_CH);
 
         StartAD(V12_CH);
-        V12 =ReadAD(V12_CH);
+        V12 = ReadAD(V12_CH);
 
         if(compState)
         {
@@ -291,7 +321,6 @@ inline void ADCMeasPoll(void)
 
 inline void ClearTankMeas(void)
 {
-
     TankVindex=0;
     TankSampleMax=0;
     if(CarData.TankMode == TANK_MODE_COMP) initComparator();
@@ -299,8 +328,6 @@ inline void ClearTankMeas(void)
 
 inline uint8_t RetTankMeasMax(void)
 {
-
-
     return TankSampleMax;
 }
 
@@ -308,62 +335,72 @@ volatile uint8_t Tim0_OVF=0;
 
 ISR(TIMER0_OVF_vect)
 {
-
     Tim0_OVF++;
-
 }
 
-volatile uint8_t running = 0;
-
+volatile uint8_t is_running = 0;
+volatile uint8_t is_wide;
 
 /* volana z interruptu casovacce */
-void CMeasPoll(void)
+void StatsPoll(void)
 {
-    // uint32_t ticks=0;
-    uint16_t imp=0;
-
-    Counter1Ticks = TCNT1;
-    Counter1Ticks+= (uint32_t)Tim1_OVF*65536;
-    Counter1Ticks/=2;
+    Counter1Ticks = (uint32_t)Tim1_OVF*(uint32_t)65536ul + (uint32_t)TCNT1;
     TCNT1 = 0;
     Tim1_OVF=0;
-    Counter0Val = TCNT0;
+    Counter1Ticks/=2;
+
+    Counter0Ticks = (uint16_t)Tim0_OVF*(uint16_t)256u + (uint16_t)TCNT0;
     TCNT0=0;
-    Counter0_OVF=Tim0_OVF;
     Tim0_OVF=0;
 
+#ifdef USART_DEBUG
+char debug[300];
+uart_init(UART_BAUD_SELECT(115200,F_CPU));
+sprintf_P(debug,PSTR("DEBUG:StatsPoll():Counter1Ticks=%ul;Counter0Ticks=%ul;\n"),Counter1Ticks,Counter0Ticks);
+uart_puts(debug);
+#endif // USART_DEBUG
+
     /* osetreni maxima - pri vypnutem motoru, nektere vstrikovace spinaji vstupni logiku do log 0 a nechtelo to bez tohoto uspavat */
-    if(  (Counter0Val || Counter0_OVF) || (Counter1Ticks<TICKS_MAX && Counter1Ticks!=0)  )
+    if( (Counter0Ticks!=0) || (/*Counter1Ticks<TICKS_MAX && */Counter1Ticks!=0)  )
     {
-        //ticks = Counter1Ticks;
-        //ticks += (uint32_t)Counter1_OVF*65536;
-        //ticks/=2;   /* delicka z 100 kHz na 50 kHz */
+        // omit one-impulse data which may occur during ignition start-up
+        if (Counter1Ticks == 1) {
+          Counter1Ticks = 0;
+        }
 
-        CarData.AvgInj+= Counter1Ticks;
-        CarData.TripInj += Counter1Ticks;
-        CarData.TotInj  += Counter1Ticks;
+        if (Counter0Ticks == 1) {
+            Counter0Ticks = 0;
+        }
 
-        if(Counter0_OVF) imp = ((uint16_t)256 * (uint16_t)Counter0_OVF);
+        StatsData.CurrInj += Counter1Ticks;
+        StatsData.TripInj += Counter1Ticks;
+        StatsData.TankInj += Counter1Ticks;
+        StatsData.TotInj  += Counter1Ticks;
 
-        CarData.AvgImp += (uint16_t)Counter0Val + imp;
-        CarData.TripImp += (uint16_t)Counter0Val + imp;
-        CarData.TotImp += (uint16_t)Counter0Val + imp;
+        StatsData.CurrImp += Counter0Ticks;
+        StatsData.TripImp += Counter0Ticks;
+        StatsData.TankImp += Counter0Ticks;
+        StatsData.TotImp  += Counter0Ticks;
 
-        running=1;
+        if (Counter1Ticks != 0 || Counter0Ticks != 0) {
+            // we are really measuring running engine or moving car
+            //TODO - teï se to spoléhá jen na watchdog timer a na volání StatsPoll jednou za cca 1s
+            StatsData.CurrTime += 1;
+            StatsData.TripTime += 1;
+            StatsData.TankTime += 1;
+            StatsData.TotTime  += 1;
 
+            is_running=1;
+        }
     }
     else
     {
-        running=0;
+        is_running=0;
         Counter1Ticks=0;
-        Counter0Val=0;
-        Counter0_OVF=0;
+        Counter0Ticks=0;
     }
-
-
-
-
 }
+
 mv_t RetTmV(uint16_t ad)
 {
 
@@ -426,11 +463,17 @@ mv_t GetV12mV(void)
     mv = ((uint32_t)V12 * REF_VOLT)/1024;
 
     /*return ((mv*(uint32_t)(V12_R1+V12_R2))/V12_R2); */
-    return ((mv*(uint32_t)(CarData.calib_volt+V12_R2))/V12_R2);
+    return ((mv*(uint32_t)(BCData.VoltmeterCalibration+V12_R2))/V12_R2);
 
 }
+
+v_t GetV12V(void)
+{
+    return GetV12mV()/1000.0f;
+}
+
 /* pridano 8.10.2011 - implementace po castech linearni aproximace nadrze */
-tank_t GetTankL(void)
+tank_t GetTankLMeas(void)
 {
 
     int32_t l2=0;
@@ -527,11 +570,8 @@ workaround: //uprava pokud nulta neexistuje
 
             l2 = CarData.TankCalib[i].litr;
             mv2 = CarData.TankCalib[i].mvolt;
-
         }
-
     }
-
     int32_t k = ((l2 - l1)*10000);
 
     k /=(mv2-mv1);
@@ -540,509 +580,411 @@ workaround: //uprava pokud nulta neexistuje
 
     k = ( (k*mv)+q )/1000;
 
+    //zaokrouhleni
     if(k<0) k = 0;
+    //else if(k%10 > 4) k+=10;
+    tank_t f = k/10.0f;
 
-    else if(k%10 > 4) k+=10;
-
-    k/=10;
-
-    return  (k>CarData.TankL?CarData.TankL:k);
-
-
+return  (tank_t)(f > CarData.TankL ? CarData.TankL : f);
 }
 
-uint16_t GetMaxDis(void)
+tank_t GetTankLCalc(void)
 {
+    return GetCalibTankL()-GetTankFuel();
+}
 
-    fuel_t f= GetAvgFuelCons();
+tank_t GetTankL(void)
+{
+    if (GetTankFuelSrc()) // calculation
+    {
+        return GetTankLCalc();
+    }
+    else
+    {
+        return GetTankLMeas();
+    }
+}
 
-    if(!f) return 0;
+dist_km_t GetRange(fuel_t cons)
+{
+    if(cons<=0) return 0;
+    return (GetTankL()/cons)*100;
+}
 
-    uint16_t dis = ((uint16_t)GetTankL() * (uint16_t)100)/GetAvgFuelCons();
+dist_km_t GetInstRange(void)
+{
+    return GetRange(GetInstFuelCons());
+}
 
-    return (dis*10);
+dist_km_t GetCurrRange(void)
+{
+    return GetRange(GetCurrFuelCons());
+}
 
+h_t GetInstRemHrs(void) {
+    fuel_t cons = GetInstFuelConsL();
+    if (cons <= 0) {
+        return 0;
+    }
+    return (h_t)(GetTankL()/cons);
 }
 
 fuel_t GetFuel(inj_t *inj)
 {
-
-    if(*inj ==0 || CarData.CalibInjFlow ==0 || CarData.NumV ==0) return 0;
+    if(*inj ==0 || CarData.CalibInjFlow ==0 || CarData.NumC ==0) return 0.0f;
 
     /* CalibInjFlow format 3500 = 350,0 ccm/min
-        NumV 4 = 4 valce
+        NumC 4 = 4 valce
         inj 50 000 = 1s
 
     */
-
-
-    return (fuel_t)( (inj_t)(((inj_t)*inj/(inj_t)60)*(uint64_t)CarData.NumV*(uint64_t)CarData.CalibInjFlow)/((inj_t)50000000UL) );
-    //inj_t calc1 = (( (inj_t)(*inj/6000)*(inj_t)CarData.NumV*(inj_t)CarData.CalibInjFlow)/(500000) );
-
-//       return calc1;
-
-    // return ( ((inj_t)(*inj/60000)*(inj_t)CarData.NumV*(inj_t)CarData.CalibInjFlow)/(50000) );
-
-
-    /*inj_t calc1 = ( ((uint32_t)(*inj_imp/6000)*(uint32_t)CarData.NumV*(uint32_t)CarData.CalibInjFlow)/(500000) );
-
-    inj_t calc;
-
-    calc = * inj_min*CarData.CalibInjFlow*CarData.NumV;
-
-    if(calc > *inj_min) calc /=1000;
-    else calc = ((*inj_min/1000)*CarData.NumV*CarData.CalibInjFlow);
-
-    return (calc+calc1); */
+    ////        32         64      64             64             64                        64                                64         30
+    //return (fuel_t)( (inj_t)(((inj_t)*inj/(inj_t)60)*(uint64_t)CarData.NumC*(uint64_t)CarData.CalibInjFlow)/((inj_t)(500000000UL/PRECISION)) ); // 50000000UL -  modified to enhance precision to two decimal places
+            //64
+    //return (fuel_t)((*inj/5OOOO.0f)*(CarData.CalibInjFlow/600.0f)*0.001f*CarData.NumC);
+    return (fuel_t)((*inj*CarData.CalibInjFlow*CarData.NumC)/30000000000.0f);
 }
 
 inline fuel_t GetCurrFuel(void)
 {
-
-    return GetFuel(&CarData.AvgInj);
-
+    return GetFuel(&StatsData.CurrInj);
 }
 
 inline fuel_t GetTripFuel(void)
 {
-
-    return GetFuel(&CarData.TripInj);
-
+    return GetFuel(&StatsData.TripInj);
 }
 
-inline void StoreCMeas(void)
+inline fuel_t GetTankFuel(void)
 {
-
-    eeprom_update_block(&CarData,&eCarVals,sizeof(cm_t));
-
-
+    return GetFuel(&StatsData.TankInj);
 }
 
-m_t RetMeters(odo_t * imp)
+inline fuel_t GetTotFuel(void)
+{
+    return GetFuel(&StatsData.TotInj);
+}
+
+inline void StoreBCData(void)
+{
+    eeprom_update_block(&BCData,&eBCVals,sizeof(bcdata_t));
+}
+
+inline void StoreCarData(void)
+{
+    eeprom_update_block(&CarData,&eCarVals,sizeof(cardata_t));
+}
+
+inline void StoreStatsData(void)
+{
+    eeprom_update_block(&StatsData,&eStatsVals,sizeof(statsdata_t));
+}
+
+inline void StoreData(void)
+{
+    StoreBCData();
+    StoreCarData();
+    StoreStatsData();
+}
+
+dist_m_t RetMeters(odo_t * imp)
 {
 
-    if(CarData.CalibMeters ==0 || *imp ==0 ) return 0;
+    if (CarData.CalibMeters == 0 || *imp == 0) return 0;
 
-    m_t m=0;
+    dist_m_t m=0;
 
     /*if( (*imp)>((odo_t)CarData.CalibMeters*(odo_t)1000))    return (    ((*imp) / (odo_t)CarData.CalibMeters)* (odo_t)100);
 
     else return (    ((*imp) * (odo_t)100)  / (odo_t)CarData.CalibMeters);*/
     if(*imp < 42000000UL)
     {
-
-        m=(((*imp) * (odo_t)100)  / (odo_t)CarData.CalibMeters);
-
+        m=(((*imp) * (odo_t)100) / (odo_t)CarData.CalibMeters);
     }
     else
     {
-
-        m=(    ((*imp) / (odo_t)CarData.CalibMeters)* (odo_t)100);
-
+        m=(((*imp) / (odo_t)CarData.CalibMeters) * (odo_t)100);
     }
     return m;
-
 }
 
-fuel_t RetFuelCons(odo_t * imp, inj_t *inj)
+dist_km_t RetKMeters(odo_t * imp) {
+    return RetMeters(imp)/1000.0f;
+}
+
+fuel_t RetFuelCons(odo_t *imp, inj_t *inj)
 {
 
+    if( *imp<4 || *inj ==0 || CarData.CalibInjFlow == 0 || CarData.NumC == 0) return 0;
 
-
-    if( *imp<4   || *inj ==0 || CarData.CalibInjFlow ==0 || CarData.NumV ==0) return 0;
-
-    /* CalibInjFlow format 3500 = 350,0 ccm/min
-       NumV 4 = 4 valce
-       inj 50 000 = 1s
-
-        */
+    /* CalibInjFlow format 3500 = 350,0 ccm/min; NumC 4 = 4 valce; inj 50 000 = 1s */
 
     /* uprava nejspise neco na zpusob ukladani minut v 32bit promenne + druhy 32bit prom na zbytky*/
-    return ((*inj * (uint64_t)CarData.NumV * (uint64_t)CarData.CalibInjFlow)/(uint64_t)RetMeters(imp))/(uint64_t)30000 ;
-
-    /*    inj_t calc = 0;
-        inj_t calc1=0;
-
-        odo_t meters = RetMeters(imp); */
-
-    /*  if(*inj_imp){
-
-          if(*inj_imp < 300000UL){
-
-              calc = (((*inj_imp* CarData.CalibInjFlow)/meters)*CarData.NumV)/30000;
-
-          }else {
-
-
-              calc = (((*inj_imp * CarData.NumV)/10000)*CarData.CalibInjFlow)/meters/3;
-
-          }
-
-      }
-
-      if(*inj_min){
-
-          calc1 = *inj_min * CarData.CalibInjFlow*CarData.NumV;
-
-          if(*inj_min < calc1){
-
-
-              if(meters > 10000) {
-
-                  calc1 = ((*inj_min*CarData.CalibInjFlow*CarData.NumV)/(meters/100));
-
-              }else calc1 = ((*inj_min*CarData.CalibInjFlow*CarData.NumV)/meters)*100;
-
-
-          }else {
-
-              if(meters > 10000){
-
-                  calc1 = (*inj_min/(meters/100))*CarData.CalibInjFlow*CarData.NumV;
-
-              }else {
-
-                  calc1 = ((*inj_min/meters)*100)*CarData.CalibInjFlow*CarData.NumV;
-
-              }
-
-
-          }
-      }
-
-      return (calc+calc1);*/
-
-    /*   if(*inj_imp)
-      {
-
-          if(*inj_imp < 42000UL){
-
-              calc = (  (( (*inj_imp* (inj_t)CarData.CalibInjFlow))*(inj_t)CarData.NumV) /meters)/(inj_t)3000;
-
-          }else if(*inj_imp < 420000UL)
-          {
-
-              calc = (  (( (*inj_imp* (inj_t)CarData.CalibInjFlow)/(inj_t)10 )*(inj_t)CarData.NumV) /meters)/(inj_t)300;
-
-          }
-          else
-          {
-              calc = (((*inj_imp * (inj_t)CarData.NumV)/(inj_t)100)*(inj_t)CarData.CalibInjFlow)/meters/(inj_t)30;
-          }
-
-
-      }
-
-
-      if(*inj_min)
-      {
-
-        if(*inj_min < 42UL){
-
-              calc1 = (  *inj_min*(inj_t)CarData.CalibInjFlow*(inj_t)CarData.NumV*1000 ) /meters;
-
-        }else if(*inj_min < 420UL){
-
-              calc1 = (   *inj_min* (inj_t)CarData.CalibInjFlow*100*(inj_t)CarData.NumV) /(meters/10);
-
-        }else if(*inj_min < 4200UL){
-              calc1 = (   *inj_min*10* (inj_t)CarData.CalibInjFlow*(inj_t)CarData.NumV) /(meters/100);
-        }else if(*inj_min < 42000UL){
-              calc1 = (   (*inj_min)* (inj_t)CarData.CalibInjFlow*(inj_t)CarData.NumV) /(meters/1000);
-        }
-        else if(*inj_min < 420000UL){
-              calc1 = (   (*inj_min/(inj_t)10)* (inj_t)CarData.CalibInjFlow*(inj_t)CarData.NumV) /(meters/10000);
-        }
-        else{
-              calc1 = (  (( (*inj_min/(inj_t)100)* (inj_t)CarData.CalibInjFlow) )*(inj_t)CarData.NumV) /(meters/100000);
-        }
-      } */
-
-//      return ((calc+calc1)/10);
+    //return ((*inj * (uint64_t)CarData.NumC * (uint64_t)CarData.CalibInjFlow)/(uint64_t)RetMeters(imp))/((uint64_t)300000/PRECISION); // 30000 - úprava na pøesnost na dvì desetinná místa
+    return (fuel_t)((GetFuel(inj)*100) / RetKMeters(imp));
 }
 
-fuel_t RetFuelConsL(void)
+fuel_t RetInstFuelConsL(void)
 {
-
-
-
-    if( Counter1Ticks == 0 || CarData.NumV ==0 || CarData.CalibInjFlow ==0) return 0;
+    if( Counter1Ticks == 0 || CarData.NumC == 0 || CarData.CalibInjFlow == 0) return 0;
 
     /* Counter / 50 000 -> (50khz) mam sekundy. *valce* InjFlow v (ccm/min)/10 / 60 / 1000 ( na dm2=litry) * 10 ( presnost na jedno misto) *3600 -> xx,x L za hodinu */
 
-    return ( (((((uint64_t)Counter1Ticks *3* (uint64_t)CarData.NumV)/250) * (uint64_t)CarData.CalibInjFlow/10))/1000 );
+    //return ( (((((uint64_t)Counter1Ticks * 3 * (uint64_t)CarData.NumC)/250) * (uint64_t)CarData.CalibInjFlow/10))/(10000/PRECISION));
+    inj_t ticks = GetInjCnt();
+    return GetFuel(&ticks) * 3600.0f;
+}
+
+inline fuel_t GetInstFuelCons(void)
+{
+    inj_t ticks = GetInjCnt();
+    odo_t imp = GetImpCnt();
+
+    return RetFuelCons(&imp,&ticks);
+}
+
+// 2014-06-23 zmìna z uint16_t, možná zde docházelo k pøeteèení pøi vysoké spotøebì
+inj_t GetInjCnt(void)
+{
+    return Counter1Ticks;
+}
+
+odo_t GetImpCnt(void)
+{
+    return Counter0Ticks;
+}
+
+inline fuel_t GetInstFuelConsL(void)
+{
+    return RetInstFuelConsL();
 }
 
 inline fuel_t GetCurrFuelCons(void)
 {
-
-    inj_t ticks = Counter1Ticks;
-    odo_t imp = GetImpCnt();
-
-
-    return RetFuelCons(&imp,&ticks);
-
-}
-
-uint16_t GetInjCnt(void)
-{
-
-    return Counter1Ticks;
-
-}
-
-uint16_t GetImpCnt(void)
-{
-
-    return ((uint16_t)Counter0Val+((uint16_t)Counter0_OVF*(uint16_t)256));
-
-}
-
-inline fuel_t GetCurrFuelConsL(void)
-{
-
-    return RetFuelConsL();
-
-}
-
-inline fuel_t GetAvgFuelCons(void)
-{
-
-    return RetFuelCons(&CarData.AvgImp,&CarData.AvgInj);
-
+    return RetFuelCons(&StatsData.CurrImp,&StatsData.CurrInj);
 }
 
 inline fuel_t GetTripFuelCons(void)
 {
+    return RetFuelCons(&StatsData.TripImp,&StatsData.TripInj);
+}
 
-    return RetFuelCons(&CarData.TripImp,&CarData.TripInj);
-
+inline fuel_t GetTankFuelCons(void)
+{
+    return RetFuelCons(&StatsData.TankImp,&StatsData.TankInj);
 }
 
 inline fuel_t GetTotFuelCons(void)
 {
-
-    return RetFuelCons(&CarData.TotImp,&CarData.TotInj);
-
+    return RetFuelCons(&StatsData.TotImp,&StatsData.TotInj);
 }
 
-inline m_t GetCurrMeters(void)
+inline dist_km_t GetCurrKMeters(void)
 {
-
-    return RetMeters(&CarData.AvgImp);
-
+    return RetKMeters(&StatsData.CurrImp);
 }
 
-inline m_t GetTripMeters(void)
+inline dist_km_t GetTripKMeters(void)
 {
-
-    return RetMeters(&CarData.TripImp);
-
+    return RetKMeters(&StatsData.TripImp);
 }
 
-inline m_t GetTotMeters(void)
+inline dist_km_t GetTankKMeters(void)
 {
-
-    return RetMeters(&CarData.TotImp);
-
+    return RetKMeters(&StatsData.TankImp);
 }
 
-m_t GetActMeters(void)
+inline dist_km_t GetTotKMeters(void)
 {
+    return RetKMeters(&StatsData.TotImp);
+}
 
+inline odo_t * GetTripImp(void) {
+    return &StatsData.TripImp;
+}
+
+inline odo_t * GetTankImp(void) {
+    return &StatsData.TankImp;
+}
+
+inline odo_t * GetTotImp(void) {
+    return &StatsData.TotImp;
+}
+
+inline dist_km_t GetInstKMeters(void)
+{
     odo_t imp = GetImpCnt();
+    return RetKMeters(&imp);
+}
 
-    return RetMeters(&imp);
+inline time_t GetCurrTime(void) {
+    return (time_t)StatsData.CurrTime;
+    }
+    
+inline time_t GetTripTime(void) {
+    return (time_t)StatsData.TripTime;
+}
 
+inline time_t GetTankTime(void) {
+    return (time_t)StatsData.TankTime;
+}
+
+inline time_t GetTotTime(void) {
+    return (time_t)StatsData.TotTime;
 }
 
 inline uint8_t IsRunning(void)
 {
+    return is_running;
+}
 
-    return running;
+inline uint8_t IsWide(void)
+{
+    return is_wide;
+}
 
+inline void RefreshWideFlag(void) {
+    is_wide = BCData.WideMode;
 }
 
 inline ipm_t GetCalibMeters(void)
 {
-
     return CarData.CalibMeters;
-
 }
 
 inline ccmmin_t GetCalibInjFlow(void)
 {
-
     return CarData.CalibInjFlow;
-
 }
 
 inline void SetCalibMeters(ipm_t cm)
 {
-
     CarData.CalibMeters = cm;
+}
 
+inline uint16_t GetCalibSpeedRatio(void)
+{
+    return CarData.CalibSpeedRatio;
+}
+
+inline void SetCalibSpeedRatio(uint16_t ratio)
+{
+    CarData.CalibSpeedRatio = ratio;
 }
 
 inline void SetCalibInjFlow(ccmmin_t ij)
 {
-
     CarData.CalibInjFlow = ij;
-
 }
 
-inline uint8_t GetCalibValve(void)
+inline uint8_t GetCalibCyls(void)
 {
-
-    return CarData.NumV;
-
+    return CarData.NumC;
 }
-inline void SetCalibValve(uint8_t v)
+
+inline void SetCalibCyls(uint8_t c)
 {
-
-    CarData.NumV = v;
-
-}
-/*
-inline mv_t GetCalibV1(void){
-
-return CarData.CalibV1;
+    CarData.NumC = c;
 }
 
-inline mv_t GetCalibV2(void){
-
-return CarData.CalibV2;
-}
-
-inline void SetCalibV1(mv_t v){
-
-CarData.CalibV1 = v;
-
-}
-
-inline void SetCalibV2(mv_t v){
-
-CarData.CalibV2 = v;
-
-}
-
-inline tank_t GetCalibL1(void){
-
-return CarData.CalibL1;
-
-}
-*/
 inline tank_t GetCalibLx(uint8_t i)
 {
-
     if(i>=CALCT_CNT) return 0;
-
     return CarData.TankCalib[i].litr;
-
 }
 
 inline mv_t GetCalibVx(uint8_t i)
 {
-
     if(i>=CALCT_CNT) return 0;
-
     return CarData.TankCalib[i].mvolt;
-
 }
 
 inline uint8_t GetCalibIx(uint8_t i)
 {
-
     if(i>=CALCT_CNT) return 0;
-
     return CarData.TankCalib[i].init;
-
 }
 
 inline void SetCalibLx(uint8_t i,tank_t litr)
 {
-
     if(i>=CALCT_CNT) return;
-
     CarData.TankCalib[i].litr=litr;
-
 }
 
 inline void SetCalibVx(uint8_t i,mv_t mv)
 {
-
     if(i>=CALCT_CNT) return ;
     CarData.TankCalib[i].mvolt=mv;
-
 }
 
 inline void SetCalibIx(uint8_t i,uint8_t init)
 {
-
     if(i>=CALCT_CNT) return ;
     CarData.TankCalib[i].init = init;
-
-}
-/*
-inline tank_t GetCalibL2(void){
-
-return CarData.CalibL2;
-
 }
 
-inline void SetCalibL1(tank_t l){
-
-CarData.CalibL1 = l;
-
-}
-
-inline void SetCalibL2(tank_t l){
-
-CarData.CalibL2 = l;
-
-}
-*/
-inline tank_t GetCalibL(void)
+inline tank_t GetCalibTankL(void)
 {
-
-    return CarData.TankL;
-
+    return CarData.TankL*1.0f;
 }
-inline void SetCalibL(tank_t l)
+
+inline void SetCalibTankL(tank_t l)
 {
-
-
     CarData.TankL = l;
-
 }
 
-inline void ClearCMeas(void)
+inline void ClearBCData(void)
 {
-
-    eeprom_update_byte(&eCarVals.init,0);
-
+    eeprom_update_byte(&eBCVals.init,0);
 }
-inline void ClearAvgMeas(void)
+
+inline void ClearCarData(void)
+{
+    eeprom_update_byte(&eCarVals.init,0);
+}
+
+inline void ClearStatsData(void)
+{
+    eeprom_update_byte(&eStatsVals.init,0);
+}
+
+inline void ClearData(void)
+{
+    ClearBCData();
+    ClearCarData();
+    ClearStatsData();
+}
+
+inline void ClearCurrData(void)
 {
     cli();
-    CarData.AvgInj = 0;
-    CarData.AvgImp = 0;
+    StatsData.CurrInj =  0;
+    StatsData.CurrImp =  0;
+    StatsData.CurrTime = 0;
     sei();
 
 }
-inline void ClearTripMeas(void)
+inline void ClearTripData(void)
 {
     cli();
-    CarData.TripInj = 0;
-    CarData.TripImp = 0;
+    StatsData.TripInj  = 0;
+    StatsData.TripImp  = 0;
+    StatsData.TripTime = 0;
+    sei();
+}
+
+inline void ClearTankData(void)
+{
+    cli();
+    StatsData.TankInj  = 0;
+    StatsData.TankImp  = 0;
+    StatsData.TankTime = 0;
     sei();
 }
 
 inline uint8_t GetTankMode(void)
 {
-
     return CarData.TankMode;
-
 }
 
 inline void SetTankMode(uint8_t set)
@@ -1054,55 +996,162 @@ inline void SetTankMode(uint8_t set)
 
 }
 
-uint16_t GetActSpeed(void)
+inline uint8_t GetTankFuelSrc(void)
 {
-    return ( (uint32_t)GetImpCnt()*3600)/CarData.CalibMeters;
+    return CarData.TankFuelSrc;
+}
+
+inline void SetTankFuelSrc(uint8_t set)
+{
+    CarData.TankFuelSrc = set;
+}
+
+inline uint8_t GetWideMode(void)
+{
+    return BCData.WideMode;
+}
+
+inline void SetWideMode(uint8_t set)
+{
+    BCData.WideMode = set;
+}
+
+speed_t GetInstSpeed(void)
+{
+    // pro optimalizaci výpoètu je pokráceno násobení impulzù x100 a dìlení CalibSpeedRation /100
+    return (GetImpCnt() / (float)CarData.CalibMeters) * 3.6f /* m/s -> km/h */ * (float)CarData.CalibSpeedRatio;
+}
+
+speed_t GetSpeedFor(dist_km_t kms, time_t secs) {
+    speed_t ret = 0.0f;
+    if (kms > 0 && secs > 0) {
+        ret = (kms*3600.0f/secs*1.0f)*(CarData.CalibSpeedRatio/100.0f); 
+    }
+    return ret;
+}
+
+speed_t GetCurrSpeed(void) 
+{
+    return GetSpeedFor(GetCurrKMeters(),GetCurrTime());
+}
+
+speed_t GetTripSpeed(void)
+{
+    return GetSpeedFor(GetTripKMeters(),GetTripTime());
+}
+
+speed_t GetTankSpeed(void)
+{
+    return GetSpeedFor(GetTankKMeters(),GetTankTime());
+}
+
+speed_t GetTotSpeed(void)
+{
+    return GetSpeedFor(GetTotKMeters(),GetTotTime());
 }
 
 inline uint16_t GetCalibVolt(void)
 {
-
-    return CarData.calib_volt;
+    return BCData.VoltmeterCalibration;
 }
 
 inline void SetCalibVolt(uint16_t calib)
 {
-
-    CarData.calib_volt = calib;
+    BCData.VoltmeterCalibration = calib;
 }
 
 inline uint8_t getSleepTime(void)
 {
-
-    return CarData.SleepTime;
+    return BCData.SleepTime;
 }
 
 inline void setSleepTime(uint8_t time)
 {
-
-    CarData.SleepTime = time;
+    BCData.SleepTime = time;
 }
 
 /* zobrazovaci workaround..kazdy chce neco jineho */
 
-inline void setMenu1(uint8_t menu){
-    CarData.menu1 = menu;
+inline void SetDefSubDisp(uint8_t subdispID) {
+    BCData.DefaultSubDispPref = subdispID;
 }
 
-inline uint8_t getMenu1(void){
-    return CarData.menu1;
+inline uint8_t GetDefSubDisp(void) {
+    return BCData.DefaultSubDispPref;
 }
 
-// nove fce pro obsluhu sleepFlag
-
-inline void setSleepFlag(void){
-    eeprom_write_byte(&eCarVals.sleepFlag ,1);
+inline uint8_t GetSubDispChangeSpeed(void) {
+    return BCData.SubDisplayChangeSpeed;
 }
 
-inline void clearSleepFlag(void){
-    eeprom_write_byte(&eCarVals.sleepFlag ,0);
+inline void SetSubDispChangeSpeed(uint8_t speed) {
+    BCData.SubDisplayChangeSpeed = speed;
 }
 
-inline uint8_t isSleeFlagEnabled(void){
-    return eeprom_read_byte(&eCarVals.sleepFlag);
+// sensors stuff
+int16_t temp_in=0;
+int16_t temp_out=0;
+
+uint8_t ConvProgrs = 0;
+uint8_t TimState = 0;
+
+inline float RetSensorIn(void)
+{
+    return (float)(temp_in/10.0f);
+}
+
+inline float RetSensorOut(void)
+{
+    return (float)(temp_out/10.0f);
+}
+
+inline void SensorInit(void){
+
+    /* kontrola konfigurace senzoru */
+
+    if(BCData.Sensors > SENSOR_OUT_IN) {
+        BCData.Sensors = SENSOR_NO;
+        StoreBCData();
+    }
+}
+
+inline void SensorsSet(uint8_t set){
+
+    BCData.Sensors = set;
+    StoreBCData();
+    ConvProgrs = 0;
+    TimState = 0;
+    temp_in = 0;
+    temp_out = 0;
+
+}
+
+uint8_t SensorsGet(void) {
+    return BCData.Sensors;
+}
+
+inline void SensorsPoll(void) {
+
+    if(BCData.Sensors!=SENSOR_NO) {
+
+        if(ConvProgrs==0){
+
+            if(BCData.Sensors!=SENSOR_IN)  startT_out;
+            if(BCData.Sensors!=SENSOR_OUT) startT_in;
+
+            TimState = RetWdTimer();
+
+            ConvProgrs = 1;
+        }
+        else {
+            if (CompWdTimer(TimState,4)) { // cca 1 s
+
+                if(BCData.Sensors!=SENSOR_IN)  readT_out(&temp_out);
+                if(BCData.Sensors!=SENSOR_OUT) readT_in(&temp_in) ;
+
+                ConvProgrs = 0;
+
+            }
+        }
+    }
 }

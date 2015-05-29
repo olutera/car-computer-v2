@@ -10,23 +10,16 @@
 int16_t temp_in=0;
 int16_t temp_out=0;
 
-uint8_t eSensors EEMEM;
 uint8_t Sensors = 0;
 uint8_t ConvProgrs = 0;
 uint8_t TimState = 0;
 
-inline int16_t RetSensorIn(void){
-
-
-return temp_in;
-
+inline float RetSensorIn(void){
+	return (float)(temp_in/10.0f);
 }
 
-inline int16_t RetSensorOut(void){
-
-
-return temp_out;
-
+inline float RetSensorOut(void){
+	return (float)(temp_out/10.0f);
 }
 
 inline void SensorInit(void){

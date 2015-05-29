@@ -29,5 +29,8 @@ void SleepPoll(void);   // v main testuje zda prejit na sleep
 
 void DisSleep(void);    // zakaze sleep flag
 
+void SetSleepFlag(uint8_t);
+uint8_t GetSleepFlag(void);
+
 uint8_t CheckReboot(void);
 #endif // PWR_DOWN_H_INCLUDED

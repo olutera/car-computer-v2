@@ -30,8 +30,8 @@
 void SensorsPoll(void);
 
 /* user funcs return temps */
-int16_t RetSensorIn(void);
-int16_t RetSensorOut(void);
+float RetSensorIn(void);
+float RetSensorOut(void);
 void SensorsSet(uint8_t set);
 uint8_t SensorsGet(void);
 void SensorInit(void);

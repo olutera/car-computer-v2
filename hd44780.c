@@ -32,6 +32,10 @@
 #include "hd44780.h"
 #include "avr_compat.h"
 
+#ifdef USART_DEBUG
+#include "uart.h"
+char debug[200];
+#endif // USART_DEBUG
 
 /*
 ** constants/macros
@@ -80,7 +84,7 @@
 /*
 ** delay for a minimum of <ms>
 */
-void lcd_delay_ms(unsigned int ms)
+inline void lcdwaitms(unsigned int ms)
 {
         /* we use a calibrated macro. This is more
         ** accurate and not so much compiler dependent
@@ -95,9 +99,13 @@ void lcd_delay_ms(unsigned int ms)
                 waitus(1000);
                 ms--;
         }
-*/
+*/		
+        //waitms(ms);
+}
 
-        //_delay_ms(ms);
+inline void lcdwaitus(unsigned int us)
+{
+        waitus(us+1);
 }
 
 /*
@@ -139,10 +147,11 @@ void lcd_delay_ms(unsigned int ms)
 */
  void toggle_e(void)
 {
-    waitus(10); /* add luta*/
+    waitus(5); /* add LS*/
     lcd_e_high();
-    waitus(10); /* edit luta - default 2*/
+    waitus(5); /* edit luta - default 2*/
     lcd_e_low();
+    waitus(5); /* edit luta - default 2*/
 }
 
 /*
@@ -523,36 +532,54 @@ void lcd_init(u08 dispAttr)
 {
     /*------ Initialize lcd to 4 bit i/o mode -------*/
 
+#ifdef USART_DEBUG
+uart_puts_P("DEBUG:lcd_init()\n");
+#endif // USART_DEBUG
     lcd_data_port_out();    /* all data port bits as output */
     sbi(LCD_RS_DDR, LCD_RS_PIN);    /* RS pin as output */
     sbi(LCD_RW_DDR, LCD_RW_PIN);    /* RW pin as output */
     sbi(LCD_E_DDR, LCD_E_PIN);  /* E  pin as output */
+	// LS 2014-11-16 - set all data levels to low
+	lcd_out_low(0x00);
+	lcd_out_high(0x00);
 
-    lcd_delay_ms(50);   /* wait 16ms or more after power-on       */
+    /* lcd power on */
+    DDRD |= 1 << PD2;
+    PORTD &= ~(1 << PD2);
+    lcdwaitms(50);   /* wait 16ms or more after power-on       */ // > 100ms - pockat, az kompletne probehne inicializace po zapnutí
+	                 //  15ms after VDD > 4,5V, 40ms after VDD > 2,7V
 
+#ifdef USART_DEBUG
+uart_puts_P("DEBUG:lcd_init() - pin setup complete\n");
+#endif // USART_DEBUG
     /* initial write to lcd is 8bit */
-    lcd_out_high(LCD_FUNCTION_8BIT_2LINES);
+    lcd_out_high(0x30 /*LCD_FUNCTION_8BIT_2LINES*/);
     lcd_e_toggle();
-    lcd_delay_ms(6);    /* delay, busy flag can't be checked here */
+    lcdwaitms(5);    /* delay, busy flag can't be checked here */
 
-    lcd_out_high(LCD_FUNCTION_8BIT_2LINES);
+    lcd_out_high(0x30 /*LCD_FUNCTION_8BIT_2LINES*/);
     lcd_e_toggle();
-    lcd_delay_ms(6);    /* delay, busy flag can't be checked here */
+    lcdwaitus(200); //lcdwaitms(5);    /* delay, busy flag can't be checked here */
 
-    lcd_out_high(LCD_FUNCTION_8BIT_2LINES);
+    lcd_out_high(0x30 /*LCD_FUNCTION_8BIT_2LINES*/);
     lcd_e_toggle();
-    lcd_delay_ms(6);    /* delay, busy flag can't be checked here */
+    lcdwaitus(200); //lcdwaitms(5);    /* delay, busy flag can't be checked here */
 
-    lcd_out_high(LCD_FUNCTION_4BIT_2LINES);  /* set IO mode to 4bit */
+#ifdef USART_DEBUG
+uart_puts_P("DEBUG:lcd_init() - initialized 8bit\n");
+#endif // USART_DEBUG
+    lcd_out_high(0x20 /*LCD_FUNCTION_4BIT_2LINES*/);  /* set IO mode to 4bit */
     lcd_e_toggle();
 
+#ifdef USART_DEBUG
+uart_puts_P("DEBUG:lcd_init() - initialized 4bit\n");
+#endif // USART_DEBUG
     /* from now the lcd only accepts 4 bit I/O, we can use lcd_command() */
-    lcd_command(LCD_FUNCTION_DEFAULT);  /* function set: display lines  */
+    lcd_command(0x20 /*LCD_FUNCTION_DEFAULT*/);  /* function set: display lines  */
     lcd_command(LCD_DISP_OFF);  /* display off                  */
     lcd_clrscr();       /* display clear                */
     lcd_command(LCD_MODE_DEFAULT);  /* set entry mode               */
     lcd_command(dispAttr);  /* display/cursor control       */
-
 }
 /* add by Luta */
 void lcd_cgram_write(const char * array8,uint8_t addr){

@@ -8,6 +8,8 @@
 
 #include "buttons.h"
 #include "delay.h"
+#include "global.h"
+
 
 
 uint8_t butt_old;

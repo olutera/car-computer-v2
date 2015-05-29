@@ -15,6 +15,7 @@
 #ifndef HD44780_H
 #define HD44780_H
 #include <avr/pgmspace.h>
+#include "global.h"
 
 /* you shouldn't need to change anything below this line */
 
@@ -144,6 +145,9 @@ extern int lcd_putc_stream(char c, FILE *stream);
 #define P(s) ({static const char c[] __attribute__ ((progmem)) = s;c;})
 #endif
 #define lcd_puts_P(__s)         lcd_puts_p(P(__s))
+
+// 2013 LS - for public usage
+unsigned char lcd_waitbusy(void);
 
 #endif //HD47780_H
 
