@@ -1,0 +1,7 @@
+*.o
+*.d
+*.eep
+*.map
+*.lss
+*.srec
+Debug/*
